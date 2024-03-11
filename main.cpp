@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <vector>
 #include <arena_buffer.hpp>
+#include <algorithm>
 
 static std::vector<ENetPeer*> gPeers{};
 
@@ -36,14 +37,14 @@ int main() {
 
         b.Reset();
         b.Write(ePC_PeerList);
-        b.Write((uint32_t)gPeers.size());
+        b.Write((uint32_t) gPeers.size());
 
-        for(auto peer : gPeers) {
+        for (auto peer: gPeers) {
           b.Write(peer->address.host);
           b.Write(peer->address.port);
         }
 
-        ENetPacket* peerListPacket = enet_packet_create(b.GetBuffer(), b.GetSize(), ENET_PACKET_FLAG_RELIABLE);
+        ENetPacket *peerListPacket = enet_packet_create(b.GetBuffer(), b.GetSize(), ENET_PACKET_FLAG_RELIABLE);
         enet_peer_send(evt.peer, 0, peerListPacket);
 
         b.Reset();
@@ -52,11 +53,16 @@ int main() {
         b.Write(evt.peer->address.port);
         ENetPacket *newPeerPacket = enet_packet_create(b.GetBuffer(), b.GetSize(), ENET_PACKET_FLAG_RELIABLE);
 
-        for(auto peer : gPeers) {
+        for (auto peer: gPeers) {
           enet_peer_send(peer, 0, newPeerPacket);
         }
 
         gPeers.emplace_back(evt.peer);
+      } else if(evt.type == ENET_EVENT_TYPE_DISCONNECT) {
+        auto it = std::find(gPeers.begin(), gPeers.end(), evt.peer);
+        gPeers.erase(it);
+      } else if(evt.type == ENET_EVENT_TYPE_RECEIVE) {
+        printf("Data received! %d bytes from %s\n", (int)evt.packet->dataLength, ip);
       } else {
         printf("Unhandled event from %s\n", ip);
       }
