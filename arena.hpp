@@ -23,3 +23,18 @@ private:
   size_t maxSize=0;
   size_t cursor=0;
 };
+
+struct ArenaReadBuffer {
+  ArenaReadBuffer(const char* buffer, size_t size) : buffer(buffer), size(size) {}
+
+  template<typename T>
+  T Read() {
+    T* ret = (T*)(buffer + cursor);
+    cursor += sizeof(T);
+    return *ret;
+  }
+private:
+  const char* buffer{};
+  size_t size{};
+  size_t cursor{};
+};
