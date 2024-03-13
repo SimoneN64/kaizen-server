@@ -2,6 +2,7 @@
 #include <enet.h>
 #include <cstdio>
 #include <vector>
+#include <string>
 #include <arena_buffer.hpp>
 #include <algorithm>
 
@@ -13,12 +14,29 @@ enum PeerCommand : uint8_t {
   ePC_NewPeer,
 };
 
+const std::string validAscii = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+std::string generatePasscode() {
+  std::string ret{"000000"};
+  
+  ret[0] = validAscii[rand() % validAscii.length()];
+  ret[1] = validAscii[rand() % validAscii.length()];
+  ret[2] = validAscii[rand() % validAscii.length()];
+  ret[3] = validAscii[rand() % validAscii.length()];
+  ret[4] = validAscii[rand() % validAscii.length()];
+  ret[5] = validAscii[rand() % validAscii.length()];
+
+  return ret;
+}
+
 int main() {
   ArenaBuffer b;
   if (enet_initialize() != 0) {
     printf("An error occurred while initializing ENet.\n");
     return 1;
   }
+
+  srand(time(nullptr));
 
   ENetAddress hostAddress;
   hostAddress.host = ENET_HOST_ANY;
