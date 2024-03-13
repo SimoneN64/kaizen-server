@@ -3,18 +3,27 @@
 #include <cstdio>
 #include <vector>
 #include <string>
-#include <arena_buffer.hpp>
+#include <unordered_map>
+#include <arena.hpp>
 #include <algorithm>
+#define MAX_LOBBIES 16
 
-static std::vector<ENetPeer*> gPeers{};
-
-enum PeerCommand : uint8_t {
-  ePC_None,
-  ePC_PeerList,
-  ePC_NewPeer,
+enum ServerSideCommand : uint8_t {
+  eSCMD_None,
+  eSCMD_JoinLobby,
+  eSCMD_CreateLobby,
 };
 
-const std::string validAscii = "abcdefghijklmnopqrstuvwxyz0123456789";
+enum ClientSideCommand : uint8_t {
+  eCCMD_None,
+  eCCMD_LobbyIsFull,
+  eCCMD_PasscodeIncorrect,
+  eCCMD_MaxLobbiesReached,
+  eCCMD_LobbyChanged,
+  eCCMD_Passcode,
+};
+
+const std::string validAscii = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
 std::string generatePasscode() {
   std::string ret{"000000"};
@@ -29,8 +38,28 @@ std::string generatePasscode() {
   return ret;
 }
 
+template <typename ...Args>
+void SendPacket(ArenaBuffer& wb, ENetPeer* dest, Args... args) {
+  wb.Reset();
+  wb.Write(args...);
+  ENetPacket *packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
+  enet_peer_send(dest, 0, packet);
+}
+
+template <typename ...Args>
+void SendPacket(ArenaBuffer& wb, std::vector<ENetPeer*> dests, Args... args) {
+  wb.Reset();
+  wb.Write(args...);
+  ENetPacket *packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
+  for(auto dest : dests) {
+    enet_peer_send(dest, 0, packet);
+  }
+}
+
 int main() {
-  ArenaBuffer b;
+  std::unordered_map<const char*, std::vector<ENetPeer*>> lobbies{};
+  ArenaBuffer wb;
+
   if (enet_initialize() != 0) {
     printf("An error occurred while initializing ENet.\n");
     return 1;
@@ -38,54 +67,63 @@ int main() {
 
   srand(time(nullptr));
 
-  ENetAddress hostAddress;
+  ENetAddress hostAddress = {};
   hostAddress.host = ENET_HOST_ANY;
   hostAddress.port = 7788;
   ENetHost* host = enet_host_create(&hostAddress, 4, 2, 0, 0);
 
   printf("Listening on port %d\n", hostAddress.port);
   while(true) {
-    ENetEvent evt;
-    if(enet_host_service(host, &evt, 1000) > 0) {
-      char ip[40];
-      enet_address_get_host_ip(&evt.peer->address, ip, 40);
+    ENetEvent evt = {};
+    while(enet_host_service(host, &evt, 10) > 0) {
+      switch(evt.type) {
+        case ENET_EVENT_TYPE_CONNECT: break;
+        case ENET_EVENT_TYPE_RECEIVE: {
+          ArenaReadBuffer b{(const char*)evt.packet->data, evt.packet->dataLength};
+          auto command = b.Read<ServerSideCommand>();
+          switch(command) {
+            case eSCMD_JoinLobby: {
+              std::string passcode = b.Read();
+              if(lobbies.find(passcode.c_str()) != lobbies.end()) {
+                if(lobbies[passcode.c_str()].size() >= 4) {
+                  SendPacket(wb, evt.peer, eCCMD_LobbyIsFull, "Dummy");
+                } else {
+                  lobbies[passcode.c_str()].push_back(evt.peer);
+                }
+              } else {
+                SendPacket(wb, evt.peer, eCCMD_PasscodeIncorrect, "Oopsie :3");
+              }
+            } break;
+            case eSCMD_CreateLobby: {
+              if(lobbies.size() >= MAX_LOBBIES) {
+                SendPacket(wb, evt.peer, eCCMD_MaxLobbiesReached, "Sorry :(");
+                break;
+              }
+              auto passcode = generatePasscode();
+              while(lobbies.find(passcode.c_str()) != lobbies.end()) {
+                // regenerate
+                passcode = generatePasscode();
+              }
+              lobbies[passcode.c_str()] = {evt.peer};
+              SendPacket(wb, evt.peer, eCCMD_Passcode, passcode);
+            } break;
+            case eSCMD_None:
+              break;
+          }
+        } break;
+        case ENET_EVENT_TYPE_DISCONNECT:
+        case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: {
+          auto& thisLobbyPeers = lobbies[(char *) evt.packet->data];
+          thisLobbyPeers.erase(
+            std::remove_if(thisLobbyPeers.begin(), thisLobbyPeers.end(), [&evt](ENetPeer* peer) {
+              return evt.peer->connectID == peer->connectID;
+            }),
+          thisLobbyPeers.end());
 
-      if(evt.type == ENET_EVENT_TYPE_CONNECT) {
-        printf("New connection from %s\n", ip);
-
-        b.Reset();
-        b.Write(ePC_PeerList);
-        b.Write((uint32_t) gPeers.size());
-
-        for (auto peer: gPeers) {
-          b.Write(peer->address.host);
-          b.Write(peer->address.port);
-        }
-
-        ENetPacket *peerListPacket = enet_packet_create(b.GetBuffer(), b.GetSize(), ENET_PACKET_FLAG_RELIABLE);
-        enet_peer_send(evt.peer, 0, peerListPacket);
-
-        b.Reset();
-        b.Write(ePC_NewPeer);
-        b.Write(evt.peer->address.host);
-        b.Write(evt.peer->address.port);
-        ENetPacket *newPeerPacket = enet_packet_create(b.GetBuffer(), b.GetSize(), ENET_PACKET_FLAG_RELIABLE);
-
-        for (auto peer: gPeers) {
-          enet_peer_send(peer, 0, newPeerPacket);
-        }
-
-        gPeers.emplace_back(evt.peer);
-      } else if(evt.type == ENET_EVENT_TYPE_DISCONNECT) {
-        auto it = std::find(gPeers.begin(), gPeers.end(), evt.peer);
-        gPeers.erase(it);
-      } else if(evt.type == ENET_EVENT_TYPE_RECEIVE) {
-        printf("Data received! %d bytes from %s\n", (int)evt.packet->dataLength, ip);
-      } else {
-        printf("Unhandled event from %s\n", ip);
+          SendPacket(wb, thisLobbyPeers, eCCMD_LobbyChanged, thisLobbyPeers);
+        } break;
+        default: break;
       }
-    } else {
-      printf("... (%zu peers)\n", gPeers.size());
     }
   }
 
