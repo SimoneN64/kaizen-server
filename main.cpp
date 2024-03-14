@@ -84,6 +84,7 @@ int main() {
           switch(command) {
             case eSCMD_JoinLobby: {
               std::string passcode = b.Read();
+	      printf("Client is attempting to join with this passcode: %s\n", passcode.c_str());
               if(lobbies.find(passcode.c_str()) != lobbies.end()) {
                 if(lobbies[passcode.c_str()].size() >= 4) {
                   SendPacket(wb, evt.peer, eCCMD_LobbyIsFull, "Dummy");
@@ -100,6 +101,7 @@ int main() {
                 break;
               }
               auto passcode = generatePasscode();
+	      printf("Generated passcode: %s\n", passcode.c_str());
               while(lobbies.find(passcode.c_str()) != lobbies.end()) {
                 // regenerate
                 passcode = generatePasscode();
