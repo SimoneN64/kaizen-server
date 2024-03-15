@@ -72,6 +72,17 @@ int main() {
   hostAddress.port = 7788;
   ENetHost* host = enet_host_create(&hostAddress, 4, 2, 0, 0);
 
+  auto disconnectPeer = [&wb, &lobbies](const char* passcode, ENetPeer* peerToDisconnect) {
+    auto& thisLobbyPeers = lobbies[passcode];
+    thisLobbyPeers.erase(
+      std::remove_if(thisLobbyPeers.begin(), thisLobbyPeers.end(), [&peerToDisconnect](ENetPeer* peer) {
+        return peerToDisconnect->connectID == peer->connectID;
+        }),
+      thisLobbyPeers.end());
+
+    SendPacket(wb, thisLobbyPeers, eCCMD_LobbyChanged, thisLobbyPeers);
+  };
+
   printf("Listening on port %d\n", hostAddress.port);
   while(true) {
     ENetEvent evt = {};
@@ -84,7 +95,7 @@ int main() {
           switch(command) {
             case eSCMD_JoinLobby: {
               std::string passcode = b.Read();
-	      printf("Client is attempting to join with this passcode: %s\n", passcode.c_str());
+	            printf("Client is attempting to join with this passcode: %s\n", passcode.c_str());
               if(lobbies.find(passcode.c_str()) != lobbies.end()) {
                 if(lobbies[passcode.c_str()].size() >= 4) {
                   SendPacket(wb, evt.peer, eCCMD_LobbyIsFull, "Dummy");
@@ -101,29 +112,31 @@ int main() {
                 break;
               }
               auto passcode = generatePasscode();
-	      printf("Generated passcode: %s\n", passcode.c_str());
+	            printf("Generated passcode: %s\n", passcode.c_str());
               while(lobbies.find(passcode.c_str()) != lobbies.end()) {
                 // regenerate
                 passcode = generatePasscode();
               }
               lobbies[passcode.c_str()] = {evt.peer};
-              SendPacket(wb, evt.peer, eCCMD_Passcode, passcode);
+              SendPacket(wb, evt.peer, eCCMD_Passcode);
+              SendPacket(wb, evt.peer, passcode);
             } break;
             case eSCMD_None:
               break;
           }
         } break;
         case ENET_EVENT_TYPE_DISCONNECT:
-        case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: {
-          auto& thisLobbyPeers = lobbies[(char *) evt.packet->data];
-          thisLobbyPeers.erase(
-            std::remove_if(thisLobbyPeers.begin(), thisLobbyPeers.end(), [&evt](ENetPeer* peer) {
-              return evt.peer->connectID == peer->connectID;
-            }),
-          thisLobbyPeers.end());
-
-          SendPacket(wb, thisLobbyPeers, eCCMD_LobbyChanged, thisLobbyPeers);
-        } break;
+          disconnectPeer((char*)evt.packet->data, evt.peer);
+          break;
+        case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: // we need to find the timedout peer ourselves
+          for (auto [passcode, peers]: lobbies) {
+            for (auto peer : peers) {
+              if (peer->connectID == evt.peer->connectID) {
+                disconnectPeer(passcode, peer);
+              }
+            }
+          }
+          break;
         default: break;
       }
     }
