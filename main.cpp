@@ -77,7 +77,7 @@ int main() {
     thisLobbyPeers.erase(
       std::remove_if(thisLobbyPeers.begin(), thisLobbyPeers.end(), [&peerToDisconnect](ENetPeer* peer) {
         return peerToDisconnect->connectID == peer->connectID;
-        }),
+      }),
       thisLobbyPeers.end());
 
     SendPacket(wb, thisLobbyPeers, eCCMD_LobbyChanged, thisLobbyPeers);
@@ -91,10 +91,10 @@ int main() {
         case ENET_EVENT_TYPE_CONNECT: break;
         case ENET_EVENT_TYPE_RECEIVE: {
           ArenaReadBuffer b{(const char*)evt.packet->data, evt.packet->dataLength};
-          auto command = b.Read<ServerSideCommand>();
+          auto command = b.Read<uint8_t>();
           switch(command) {
             case eSCMD_JoinLobby: {
-              std::string passcode = b.Read();
+              std::string passcode = b.Read<std::string>();
 	            printf("Client is attempting to join with this passcode: %s\n", passcode.c_str());
               if(lobbies.find(passcode.c_str()) != lobbies.end()) {
                 if(lobbies[passcode.c_str()].size() >= 4) {
