@@ -47,9 +47,19 @@ void SendPacket(ArenaBuffer& wb, ENetPeer* dest, Args... args) {
 }
 
 template <typename ...Args>
-void SendPacket(ArenaBuffer& wb, std::vector<ENetPeer*> dests, Args... args) {
+void SendPacket(ArenaBuffer& wb, const std::vector<ENetPeer*> &dests, Args... args) {
   wb.Reset();
   wb.Write(args...);
+  ENetPacket *packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
+  for(auto dest : dests) {
+    enet_peer_send(dest, 0, packet);
+  }
+}
+
+template <typename T>
+void SendPacket(ArenaBuffer& wb, const std::vector<ENetPeer*> &dests, std::vector<T> data) {
+  wb.Reset();
+  wb.Write(data);
   ENetPacket *packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
   for(auto dest : dests) {
     enet_peer_send(dest, 0, packet);
@@ -90,11 +100,11 @@ int main() {
       switch(evt.type) {
         case ENET_EVENT_TYPE_CONNECT: break;
         case ENET_EVENT_TYPE_RECEIVE: {
-          ArenaReadBuffer b{(const char*)evt.packet->data, evt.packet->dataLength};
+          ArenaReadBuffer b{evt.packet->data, evt.packet->dataLength};
           auto command = b.Read<uint8_t>();
           switch(command) {
             case eSCMD_JoinLobby: {
-              std::string passcode = b.Read<std::string>();
+              auto passcode = b.Read<std::string>();
 	            printf("Client is attempting to join with this passcode: %s\n", passcode.c_str());
               if(lobbies.find(passcode.c_str()) != lobbies.end()) {
                 if(lobbies[passcode.c_str()].size() >= 4) {
@@ -129,7 +139,7 @@ int main() {
           disconnectPeer((char*)evt.packet->data, evt.peer);
           break;
         case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: // we need to find the timedout peer ourselves
-          for (auto [passcode, peers]: lobbies) {
+          for (const auto& [passcode, peers]: lobbies) {
             for (auto peer : peers) {
               if (peer->connectID == evt.peer->connectID) {
                 disconnectPeer(passcode, peer);
