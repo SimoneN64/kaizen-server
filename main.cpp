@@ -38,18 +38,25 @@ std::string generatePasscode() {
   return ret;
 }
 
-template <typename ...Args>
-void SendPacket(ArenaBuffer& wb, ENetPeer* dest, Args... args) {
+void SendPacket(ArenaBuffer& wb, ENetPeer* dest, const std::string& s) {
   wb.Reset();
-  wb.Write(args...);
-  ENetPacket *packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
+  wb.Write(s);
+  ENetPacket* packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
   enet_peer_send(dest, 0, packet);
 }
 
-template <typename ...Args>
-void SendPacket(ArenaBuffer& wb, const std::vector<ENetPeer*> &dests, Args... args) {
+template <typename T>
+void SendPacket(ArenaBuffer& wb, ENetPeer* dest, const T& data) {
   wb.Reset();
-  wb.Write(args...);
+  wb.Write(data);
+  ENetPacket* packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
+  enet_peer_send(dest, 0, packet);
+}
+
+template <typename T>
+void SendPacket(ArenaBuffer& wb, const std::vector<ENetPeer*> &dests, const std::vector<T>& data) {
+  wb.Reset();
+  wb.Write(data);
   ENetPacket *packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
   for(auto dest : dests) {
     enet_peer_send(dest, 0, packet);
@@ -57,11 +64,11 @@ void SendPacket(ArenaBuffer& wb, const std::vector<ENetPeer*> &dests, Args... ar
 }
 
 template <typename T>
-void SendPacket(ArenaBuffer& wb, const std::vector<ENetPeer*> &dests, std::vector<T> data) {
+void SendPacket(ArenaBuffer& wb, const std::vector<ENetPeer*>& dests, const T& data) {
   wb.Reset();
   wb.Write(data);
-  ENetPacket *packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
-  for(auto dest : dests) {
+  ENetPacket* packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
+  for (auto dest : dests) {
     enet_peer_send(dest, 0, packet);
   }
 }
@@ -90,7 +97,8 @@ int main() {
       }),
       thisLobbyPeers.end());
 
-    SendPacket(wb, thisLobbyPeers, eCCMD_LobbyChanged, thisLobbyPeers);
+    SendPacket(wb, thisLobbyPeers, eCCMD_LobbyChanged);
+    SendPacket(wb, thisLobbyPeers, thisLobbyPeers);
   };
 
   printf("Listening on port %d\n", hostAddress.port);
@@ -108,17 +116,17 @@ int main() {
 	            printf("Client is attempting to join with this passcode: %s\n", passcode.c_str());
               if(lobbies.find(passcode.c_str()) != lobbies.end()) {
                 if(lobbies[passcode.c_str()].size() >= 4) {
-                  SendPacket(wb, evt.peer, eCCMD_LobbyIsFull, "Dummy");
+                  SendPacket(wb, evt.peer, eCCMD_LobbyIsFull);
                 } else {
                   lobbies[passcode.c_str()].push_back(evt.peer);
                 }
               } else {
-                SendPacket(wb, evt.peer, eCCMD_PasscodeIncorrect, "Oopsie :3");
+                SendPacket(wb, evt.peer, eCCMD_PasscodeIncorrect);
               }
             } break;
             case eSCMD_CreateLobby: {
               if(lobbies.size() >= MAX_LOBBIES) {
-                SendPacket(wb, evt.peer, eCCMD_MaxLobbiesReached, "Sorry :(");
+                SendPacket(wb, evt.peer, eCCMD_MaxLobbiesReached);
                 break;
               }
               auto passcode = generatePasscode();
