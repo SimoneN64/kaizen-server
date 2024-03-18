@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 #include <cstring>
+#include <cstdint>
 
 struct ArenaBuffer {
   explicit ArenaBuffer(size_t maxSize = 0x1000) : maxSize(maxSize) {
