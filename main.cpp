@@ -19,8 +19,14 @@ enum ClientSideCommand : uint8_t {
   eCCMD_LobbyIsFull,
   eCCMD_PasscodeIncorrect,
   eCCMD_MaxLobbiesReached,
-  eCCMD_LobbyChanged,
+  eCCMD_PeerConnect,
+  eCCMD_PeerDisconnect,
   eCCMD_Passcode,
+};
+
+struct Peer {
+  bool isMaster = false;
+  ENetPeer handle = {};
 };
 
 const std::string validAscii = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -38,11 +44,11 @@ std::string generatePasscode() {
   return ret;
 }
 
-void SendPacket(ArenaBuffer& wb, ENetPeer* dest, const std::string& s) {
+void SendPacket(ArenaBuffer& wb, Peer& dest, const std::string& s) {
   wb.Reset();
   wb.Write(s);
   ENetPacket* packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
-  enet_peer_send(dest, 0, packet);
+  enet_peer_send(&dest.handle, 0, packet);
 }
 
 template <typename T>
@@ -54,22 +60,30 @@ void SendPacket(ArenaBuffer& wb, ENetPeer* dest, const T& data) {
 }
 
 template <typename T>
-void SendPacket(ArenaBuffer& wb, const std::vector<ENetPeer*> &dests, const std::vector<T>& data) {
+void SendPacket(ArenaBuffer& wb, Peer& dest, const T& data) {
+  wb.Reset();
+  wb.Write(data);
+  ENetPacket* packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
+  enet_peer_send(&dest.handle, 0, packet);
+}
+
+template <typename T>
+void SendPacket(ArenaBuffer& wb, const std::vector<Peer> &dests, const std::vector<T>& data) {
   wb.Reset();
   wb.Write(data);
   ENetPacket *packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
   for(auto dest : dests) {
-    enet_peer_send(dest, 0, packet);
+    enet_peer_send(&dest.handle, 0, packet);
   }
 }
 
 template <typename T>
-void SendPacket(ArenaBuffer& wb, const std::vector<ENetPeer*>& dests, const T& data) {
+void SendPacket(ArenaBuffer& wb, const std::vector<Peer>& dests, const T& data) {
   wb.Reset();
   wb.Write(data);
   ENetPacket* packet = enet_packet_create(wb.GetBuffer(), wb.GetSize(), ENET_PACKET_FLAG_RELIABLE);
   for (auto dest : dests) {
-    enet_peer_send(dest, 0, packet);
+    enet_peer_send(&dest.handle, 0, packet);
   }
 }
 
@@ -87,13 +101,23 @@ std::vector<uint8_t> CreatePacketWithData(const uint8_t &cmd, const std::string&
   std::vector<uint8_t> ret{};
   ret.resize(second.length() + 1);
   ret[0] = cmd;
-  memcpy(ret.data() + 1, second.data(), second.length());
+  memcpy(&ret[1], second.data(), second.length());
+
+  return ret;
+}
+
+template <typename T>
+std::vector<uint8_t> CreatePacketWithData(const uint8_t& cmd, const T& second) {
+  std::vector<uint8_t> ret{};
+  ret.resize(sizeof(T) + 1);
+  ret[0] = cmd;
+  memcpy(&ret[1], &second, sizeof(T));
 
   return ret;
 }
 
 int main() {
-  std::unordered_map<const char*, std::vector<ENetPeer>> lobbies{};
+  std::unordered_map<const char*, std::vector<Peer>> lobbies{};
   ArenaBuffer wb;
 
   if (enet_initialize() != 0) {
@@ -111,13 +135,13 @@ int main() {
   auto disconnectPeer = [&wb, &lobbies](const char* passcode, uint32_t peerToDisconnect) {
     auto& thisLobbyPeers = lobbies[passcode];
     thisLobbyPeers.erase(
-      std::remove_if(thisLobbyPeers.begin(), thisLobbyPeers.end(), [&peerToDisconnect](ENetPeer peer) {
-        return peerToDisconnect == peer.connectID;
+      std::remove_if(thisLobbyPeers.begin(), thisLobbyPeers.end(), [&peerToDisconnect](Peer peer) {
+        return peerToDisconnect == peer.handle.connectID;
       }),
       thisLobbyPeers.end());
 
-    auto fullPacket = CreatePacketWithData(eCCMD_LobbyChanged, thisLobbyPeers);
-    //SendPacket(wb, thisLobbyPeers, fullPacket);
+    auto fullPacket = CreatePacketWithData(eCCMD_PeerDisconnect, peerToDisconnect);
+    SendPacket(wb, thisLobbyPeers, fullPacket);
   };
 
   printf("Listening on port %d\n", hostAddress.port);
@@ -137,7 +161,10 @@ int main() {
                 if(lobbies[passcode.c_str()].size() >= 4) {
                   SendPacket(wb, evt.peer, eCCMD_LobbyIsFull);
                 } else {
-                  lobbies[passcode.c_str()].push_back(*evt.peer);
+                  Peer connected = { false, *evt.peer };
+                  auto fullPacket = CreatePacketWithData(eCCMD_PeerConnect, connected);
+                  SendPacket(wb, lobbies[passcode.c_str()], fullPacket);
+                  lobbies[passcode.c_str()].push_back(connected);
                 }
               } else {
                 SendPacket(wb, evt.peer, eCCMD_PasscodeIncorrect);
@@ -148,15 +175,17 @@ int main() {
                 SendPacket(wb, evt.peer, eCCMD_MaxLobbiesReached);
                 break;
               }
+
               auto passcode = generatePasscode();
 	            printf("Generated passcode: %s\n", passcode.c_str());
               while(lobbies.find(passcode.c_str()) != lobbies.end()) {
                 // regenerate
                 passcode = generatePasscode();
               }
-              lobbies[passcode.c_str()] = {*evt.peer};
+              Peer masterConnected = { true, *evt.peer };
+              lobbies[passcode.c_str()] = { masterConnected };
               auto fullPacket = CreatePacketWithData(eCCMD_Passcode, passcode);
-              SendPacket(wb, evt.peer, fullPacket);
+              SendPacket(wb, lobbies[passcode.c_str()], fullPacket);
             } break;
             case eSCMD_None:
               break;
@@ -168,8 +197,8 @@ int main() {
         case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: // we need to find the timedout peer ourselves
           for (const auto& [passcode, peers]: lobbies) {
             for (auto peer : peers) {
-              if (peer.connectID == evt.peer->connectID) {
-                disconnectPeer(passcode, peer.connectID);
+              if (peer.handle.connectID == evt.peer->connectID) {
+                disconnectPeer(passcode, peer.handle.connectID);
               }
             }
           }
