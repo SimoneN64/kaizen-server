@@ -93,7 +93,7 @@ std::vector<uint8_t> CreatePacketWithData(const uint8_t &cmd, const std::string&
 }
 
 int main() {
-  std::unordered_map<const char*, std::vector<uint32_t>> lobbies{};
+  std::unordered_map<const char*, std::vector<ENetPeer>> lobbies{};
   ArenaBuffer wb;
 
   if (enet_initialize() != 0) {
@@ -111,8 +111,8 @@ int main() {
   auto disconnectPeer = [&wb, &lobbies](const char* passcode, uint32_t peerToDisconnect) {
     auto& thisLobbyPeers = lobbies[passcode];
     thisLobbyPeers.erase(
-      std::remove_if(thisLobbyPeers.begin(), thisLobbyPeers.end(), [&peerToDisconnect](uint32_t peer) {
-        return peerToDisconnect == peer;
+      std::remove_if(thisLobbyPeers.begin(), thisLobbyPeers.end(), [&peerToDisconnect](ENetPeer peer) {
+        return peerToDisconnect == peer.connectID;
       }),
       thisLobbyPeers.end());
 
@@ -137,7 +137,7 @@ int main() {
                 if(lobbies[passcode.c_str()].size() >= 4) {
                   SendPacket(wb, evt.peer, eCCMD_LobbyIsFull);
                 } else {
-                  lobbies[passcode.c_str()].push_back(evt.peer->connectID);
+                  lobbies[passcode.c_str()].push_back(*evt.peer);
                 }
               } else {
                 SendPacket(wb, evt.peer, eCCMD_PasscodeIncorrect);
@@ -154,7 +154,7 @@ int main() {
                 // regenerate
                 passcode = generatePasscode();
               }
-              lobbies[passcode.c_str()] = {evt.peer->connectID};
+              lobbies[passcode.c_str()] = {*evt.peer};
               auto fullPacket = CreatePacketWithData(eCCMD_Passcode, passcode);
               SendPacket(wb, evt.peer, fullPacket);
             } break;
@@ -168,8 +168,8 @@ int main() {
         case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT: // we need to find the timedout peer ourselves
           for (const auto& [passcode, peers]: lobbies) {
             for (auto peer : peers) {
-              if (peer == evt.peer->connectID) {
-                disconnectPeer(passcode, peer);
+              if (peer.connectID == evt.peer->connectID) {
+                disconnectPeer(passcode, peer.connectID);
               }
             }
           }
